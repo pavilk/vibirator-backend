@@ -1,4 +1,4 @@
-from app.schemas.auth import AuthUserRead, LoginRequest, RegisterRequest, TokenResponse
+from app.schemas.auth import AuthUserRead, RegisterRequest, TokenResponse
 from app.schemas.association import (
     CourseSkillCreate,
     CourseSkillRead,
@@ -48,7 +48,6 @@ __all__ = [
     "CourseSkillRead",
     "CourseSkillUpdate",
     "RegisterRequest",
-    "LoginRequest",
     "TokenResponse",
     "AuthUserRead",
 ]
