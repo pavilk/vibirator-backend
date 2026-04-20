@@ -117,6 +117,7 @@ class CourseSkill(Base):
         Enum(SkillLevel, name="course_skill_to_level_enum"),
         nullable=False,
     )
+    relevance_score: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
     course: Mapped["Course"] = relationship(back_populates="skills")
     skill: Mapped["Skill"] = relationship(back_populates="courses")

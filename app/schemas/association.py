@@ -67,11 +67,13 @@ class CourseSkillCreate(BaseModel):
     skill_id: int = Field(ge=1)
     from_level: SkillLevel
     to_level: SkillLevel
+    relevance_score: int | None = None
 
 
 class CourseSkillUpdate(BaseModel):
     from_level: SkillLevel | None = None
     to_level: SkillLevel | None = None
+    relevance_score: int | None = None
 
 
 class CourseSkillRead(CourseSkillCreate):
