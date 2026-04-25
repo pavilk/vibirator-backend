@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user, get_db_session, require_admin
 from app.models.course import Course
 from app.models.user import User
+from app.models.associations import CourseSkill
 from app.schemas.course import CourseCreate, CourseRead, CourseUpdate
 
 router = APIRouter()
@@ -29,6 +30,26 @@ async def get_course(
     if course is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Course not found")
     return course
+
+@router.get("/skills/{skill_id}", response_model=list[CourseRead])
+async def get_courses_by_skill(
+    skill_id: int,
+    session: AsyncSession = Depends(get_db_session),
+    _: User = Depends(get_current_user),
+) -> list[CourseRead]:
+    query = (
+        select(Course)
+        .join(CourseSkill, CourseSkill.course_id == Course.id)
+        .where(CourseSkill.skill_id == skill_id)
+    )
+    result = await session.execute(query)
+    courses = result.scalars().all()
+    if not courses:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Courses not found for this skill",
+        )
+    return list(courses)
 
 
 @router.post("/", response_model=CourseRead, status_code=status.HTTP_201_CREATED)
