@@ -5,6 +5,8 @@ class UserBase(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     email: EmailStr
     semester: int | None = Field(default=None, ge=1)
+    is_fiit: bool = False
+    course_year: int | None = Field(default=None, ge=1, le=6)
 
 
 class UserCreate(UserBase):
@@ -16,6 +18,8 @@ class UserUpdate(BaseModel):
     email: EmailStr | None = None
     password: str | None = Field(default=None, min_length=8, max_length=255)
     semester: int | None = Field(default=None, ge=1)
+    is_fiit: bool | None = None
+    course_year: int | None = Field(default=None, ge=1, le=6)
 
 
 class UserRead(UserBase):

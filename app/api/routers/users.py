@@ -50,6 +50,8 @@ async def create_user(
         password_hash=hash_password(payload.password),
         semester=payload.semester,
         is_admin=False,
+        is_fiit=payload.is_fiit,
+        course_year=payload.course_year,
     )
     session.add(user)
     await session.commit()

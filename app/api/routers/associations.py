@@ -166,7 +166,7 @@ async def list_user_courses(
     session: AsyncSession = Depends(get_db_session),
     _: User = Depends(get_current_user),
 ) -> list[UserCourse]:
-    result = await session.execute(select(UserCourse).order_by(UserCourse.user_id, UserCourse.course_id))
+    result = await session.execute(select(UserCourse).order_by(UserCourse.user_id, UserCourse.skill_id))
     return list(result.scalars().all())
 
 
@@ -177,42 +177,43 @@ async def create_user_course(
     _: User = Depends(require_admin),
 ) -> UserCourse:
     await ensure_exists(session, User, payload.user_id, "User")
+    await ensure_exists(session, Skill, payload.skill_id, "Skill")
     await ensure_exists(session, Course, payload.course_id, "Course")
 
     item = UserCourse(**payload.model_dump())
     session.add(item)
-    await commit_or_409(session, "This user course link or position already exists")
+    await commit_or_409(session, "This user course link already exists")
     return item
 
 
-@router.patch("/user-courses/{user_id}/{course_id}", response_model=UserCourseRead)
+@router.patch("/user-courses/{user_id}/{skill_id}", response_model=UserCourseRead)
 async def update_user_course(
     user_id: int,
-    course_id: int,
+    skill_id: int,
     payload: UserCourseUpdate,
     session: AsyncSession = Depends(get_db_session),
     _: User = Depends(require_admin),
 ) -> UserCourse:
-    item = await session.get(UserCourse, {"user_id": user_id, "course_id": course_id})
+    item = await session.get(UserCourse, {"user_id": user_id, "skill_id": skill_id})
     if item is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User course link not found")
 
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(item, field, value)
 
-    await commit_or_409(session, "This course position is already used by the user")
+    await commit_or_409(session, "This user course link already exists")
     await session.refresh(item)
     return item
 
 
-@router.delete("/user-courses/{user_id}/{course_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/user-courses/{user_id}/{skill_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_user_course(
     user_id: int,
-    course_id: int,
+    skill_id: int,
     session: AsyncSession = Depends(get_db_session),
     _: User = Depends(require_admin),
 ) -> None:
-    item = await session.get(UserCourse, {"user_id": user_id, "course_id": course_id})
+    item = await session.get(UserCourse, {"user_id": user_id, "skill_id": skill_id})
     if item is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User course link not found")
 

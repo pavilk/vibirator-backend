@@ -11,10 +11,8 @@ from app.db.base import Base
 
 class SkillLevel(PyEnum):
     BEGINNER = "beginner"
-    ELEMENTARY = "elementary"
     INTERMEDIATE = "intermediate"
     ADVANCED = "advanced"
-    EXPERT = "expert"
 
 
 class Skill(Base):

@@ -6,6 +6,8 @@ class RegisterRequest(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8, max_length=255)
     semester: int | None = Field(default=None, ge=1)
+    is_fiit: bool = False
+    course_year: int | None = Field(default=None, ge=1, le=6)
 
 
 class TokenResponse(BaseModel):
@@ -21,3 +23,5 @@ class AuthUserRead(BaseModel):
     email: EmailStr
     semester: int | None = None
     is_admin: bool
+    is_fiit: bool
+    course_year: int | None = None

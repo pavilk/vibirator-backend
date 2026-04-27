@@ -14,6 +14,7 @@ class User(Base):
         CheckConstraint("char_length(trim(name)) > 0", name="ck_users_name_not_blank"),
         CheckConstraint("position('@' in email) > 1", name="ck_users_email_has_at"),
         CheckConstraint("semester IS NULL OR semester >= 1", name="ck_users_semester_positive"),
+        CheckConstraint("course_year IS NULL OR (course_year >= 1 AND course_year <= 6)", name="ck_users_course_year_range"),
     )
 
     user_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -22,6 +23,8 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     semester: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     is_admin: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    is_fiit: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    course_year: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
     professions: Mapped[List["UserProfession"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     skills: Mapped[List["UserSkill"]] = relationship(back_populates="user", cascade="all, delete-orphan")
