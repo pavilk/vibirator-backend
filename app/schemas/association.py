@@ -65,14 +65,14 @@ class ProfessionSkillRead(ProfessionSkillCreate):
 class CourseSkillCreate(BaseModel):
     course_id: int = Field(ge=1)
     skill_id: int = Field(ge=1)
-    from_level: SkillLevel
-    to_level: SkillLevel
+    from_level: str = Field(min_length=1, max_length=50)
+    to_level: str = Field(min_length=1, max_length=50)
     relevance_score: int | None = None
 
 
 class CourseSkillUpdate(BaseModel):
-    from_level: SkillLevel | None = None
-    to_level: SkillLevel | None = None
+    from_level: str | None = Field(default=None, min_length=1, max_length=50)
+    to_level: str | None = Field(default=None, min_length=1, max_length=50)
     relevance_score: int | None = None
 
 
