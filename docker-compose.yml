@@ -1,18 +1,3 @@
-services:
-  db:
-    image: postgres:16-alpine
-    container_name: vibirator-db
-    restart: unless-stopped
-    profiles: ["local"]
-    environment:
-      POSTGRES_USER: vibirator
-      POSTGRES_PASSWORD: vibirator
-      POSTGRES_DB: vibirator
-    ports:
-      - "5432:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-
   backend:
     build:
       context: .
@@ -22,10 +7,3 @@ services:
       - .env
     ports:
       - "8000:8000"
-    depends_on:
-      db:
-        condition: service_started
-        required: false
-
-volumes:
-  pgdata:
