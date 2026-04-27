@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from sqlalchemy import Boolean, CheckConstraint, Enum, ForeignKey, Integer
+from sqlalchemy import Boolean, CheckConstraint, Enum, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -109,14 +109,8 @@ class CourseSkill(Base):
         ForeignKey("skills.id", onupdate="CASCADE", ondelete="CASCADE"),
         primary_key=True,
     )
-    from_level: Mapped[SkillLevel] = mapped_column(
-        Enum(SkillLevel, name="course_skill_from_level_enum"),
-        nullable=False,
-    )
-    to_level: Mapped[SkillLevel] = mapped_column(
-        Enum(SkillLevel, name="course_skill_to_level_enum"),
-        nullable=False,
-    )
+    from_level: Mapped[str] = mapped_column(String(50), nullable=False)
+    to_level: Mapped[str] = mapped_column(String(50), nullable=False)
     relevance_score: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
     course: Mapped["Course"] = relationship(back_populates="skills")
