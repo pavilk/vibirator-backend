@@ -28,13 +28,13 @@ class UserSkillRead(UserSkillCreate):
 
 class UserCourseCreate(BaseModel):
     user_id: int = Field(ge=1)
+    skill_id: int = Field(ge=1)
     course_id: int = Field(ge=1)
-    position: int | None = Field(default=None, ge=1)
     is_completed: bool = False
 
 
 class UserCourseUpdate(BaseModel):
-    position: int | None = Field(default=None, ge=1)
+    course_id: int | None = Field(default=None, ge=1)
     is_completed: bool | None = None
 
 

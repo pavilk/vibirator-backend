@@ -18,6 +18,12 @@ from app.schemas.association import (
 from app.schemas.course import CourseCreate, CourseRead, CourseUpdate
 from app.schemas.profession import ProfessionCreate, ProfessionRead, ProfessionUpdate
 from app.schemas.skill import SkillCreate, SkillRead, SkillUpdate
+from app.schemas.matching import (
+    RecommendationResponse,
+    ScoredCourseRead,
+    SkillCoursesResponse,
+    SkillRecommendation,
+)
 from app.schemas.user import UserCreate, UserRead, UserUpdate
 
 __all__ = [
@@ -50,4 +56,8 @@ __all__ = [
     "RegisterRequest",
     "TokenResponse",
     "AuthUserRead",
+    "ScoredCourseRead",
+    "SkillCoursesResponse",
+    "SkillRecommendation",
+    "RecommendationResponse",
 ]

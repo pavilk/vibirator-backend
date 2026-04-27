@@ -48,23 +48,23 @@ class UserSkill(Base):
 
 class UserCourse(Base):
     __tablename__ = "user_courses"
-    __table_args__ = (
-        UniqueConstraint("user_id", "position", name="uq_user_courses_user_position"),
-        CheckConstraint("position IS NULL OR position >= 1", name="ck_user_courses_position_positive"),
-    )
 
     user_id: Mapped[int] = mapped_column(
         ForeignKey("users.user_id", onupdate="CASCADE", ondelete="CASCADE"),
         primary_key=True,
     )
-    course_id: Mapped[int] = mapped_column(
-        ForeignKey("courses.id", onupdate="CASCADE", ondelete="CASCADE"),
+    skill_id: Mapped[int] = mapped_column(
+        ForeignKey("skills.id", onupdate="CASCADE", ondelete="CASCADE"),
         primary_key=True,
     )
-    position: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    course_id: Mapped[int] = mapped_column(
+        ForeignKey("courses.id", onupdate="CASCADE", ondelete="CASCADE"),
+        nullable=False,
+    )
     is_completed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     user: Mapped["User"] = relationship(back_populates="courses")
+    skill: Mapped["Skill"] = relationship()
     course: Mapped["Course"] = relationship(back_populates="users")
 
 
