@@ -7,6 +7,7 @@ from app.models.course import Course
 from app.models.user import User
 from app.models.associations import CourseSkill
 from app.schemas.course import CourseCreate, CourseRead, CourseUpdate
+from app.services.course_matching import get_or_create_user_plan
 
 router = APIRouter()
 
@@ -18,6 +19,14 @@ async def list_courses(
 ) -> list[Course]:
     result = await session.execute(select(Course).order_by(Course.id))
     return list(result.scalars().all())
+
+
+@router.get("/plan", response_model=list[CourseRead])
+async def get_user_plan(
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(get_current_user),
+) -> list[Course]:
+    return await get_or_create_user_plan(session, current_user.user_id, limit=5)
 
 
 @router.get("/{course_id}", response_model=CourseRead)
