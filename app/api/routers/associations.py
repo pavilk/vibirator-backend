@@ -204,11 +204,26 @@ async def list_user_courses(
 async def create_user_course(
     payload: UserCourseCreate,
     session: AsyncSession = Depends(get_db_session),
-    _: User = Depends(require_admin),
+    current_user: User = Depends(get_current_user),
 ) -> UserCourse:
-    await ensure_exists(session, User, payload.user_id, "User")
     await ensure_exists(session, Skill, payload.skill_id, "Skill")
     await ensure_exists(session, Course, payload.course_id, "Course")
+
+    if payload.user_id != current_user.user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only add a course for yourself",
+        )
+
+    existing_item = await session.get(
+        UserCourse,
+        {"user_id": payload.user_id, "skill_id": payload.skill_id},
+    )
+    if existing_item is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This user course link already exists",
+        )
 
     item = UserCourse(**payload.model_dump())
     session.add(item)
