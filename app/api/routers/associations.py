@@ -132,10 +132,25 @@ async def list_user_skills(
 async def create_user_skill(
     payload: UserSkillCreate,
     session: AsyncSession = Depends(get_db_session),
-    _: User = Depends(require_admin),
+    current_user: User = Depends(get_current_user),
 ) -> UserSkill:
-    await ensure_exists(session, User, payload.user_id, "User")
     await ensure_exists(session, Skill, payload.skill_id, "Skill")
+
+    if payload.user_id != current_user.user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only add a skill for yourself",
+        )
+
+    existing_item = await session.get(
+        UserSkill,
+        {"user_id": payload.user_id, "skill_id": payload.skill_id},
+    )
+    if existing_item is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This user skill link already exists",
+        )
 
     item = UserSkill(**payload.model_dump())
     session.add(item)
