@@ -75,10 +75,25 @@ async def list_user_professions(
 async def create_user_profession(
     payload: UserProfessionCreate,
     session: AsyncSession = Depends(get_db_session),
-    _: User = Depends(require_admin),
+    current_user: User = Depends(get_current_user),
 ) -> UserProfession:
-    await ensure_exists(session, User, payload.user_id, "User")
     await ensure_exists(session, Profession, payload.profession_id, "Profession")
+
+    if payload.user_id != current_user.user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only add a profession for yourself",
+        )
+
+    existing_item = await session.get(
+        UserProfession,
+        {"user_id": payload.user_id, "profession_id": payload.profession_id},
+    )
+    if existing_item is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This user profession link already exists",
+        )
 
     item = UserProfession(**payload.model_dump())
     session.add(item)
