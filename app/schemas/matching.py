@@ -1,5 +1,7 @@
 from pydantic import BaseModel, ConfigDict, HttpUrl
 
+from app.schemas.course import CourseRead
+
 
 class ScoredCourseRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -40,3 +42,15 @@ class RecommendationResponse(BaseModel):
     user_id: int
     profession_id: int
     recommendations: list[SkillRecommendation]
+
+
+class UserSkillPlanItem(BaseModel):
+    skill_id: int
+    skill_name: str
+    user_level: str
+    planned_course: CourseRead | None = None
+
+
+class UserSkillPlanResponse(BaseModel):
+    user_id: int
+    recommendations: list[UserSkillPlanItem]

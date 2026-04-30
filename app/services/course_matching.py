@@ -16,11 +16,14 @@ from app.models.associations import CourseSkill, ProfessionSkill, UserCourse, Us
 from app.models.course import Course
 from app.models.skill import Skill, SkillLevel
 from app.models.user import User
+from app.schemas.course import CourseRead
 from app.schemas.matching import (
     RecommendationResponse,
     ScoredCourseRead,
     SkillCoursesResponse,
     SkillRecommendation,
+    UserSkillPlanItem,
+    UserSkillPlanResponse,
 )
 
 LEVEL_ORDER: dict[SkillLevel, int] = {
@@ -155,6 +158,28 @@ def _course_to_scored(course: Course, skill_id: int, score: float) -> ScoredCour
         semesters=course.semesters,
         skill_id=skill_id,
         score=score,
+    )
+
+
+def _course_to_read(course: Course) -> CourseRead:
+    return CourseRead.model_validate(course)
+
+
+def _scored_to_course_read(course: ScoredCourseRead) -> CourseRead:
+    return CourseRead(
+        id=course.id,
+        title=course.title,
+        platform=course.platform,
+        url=course.url,
+        description=course.description,
+        rating=course.rating,
+        practices_count=course.practices_count,
+        workload_raw=course.workload_raw,
+        is_online=course.is_online,
+        z_e=course.z_e,
+        is_paid=course.is_paid,
+        target_years=course.target_years,
+        semesters=course.semesters,
     )
 
 
@@ -381,19 +406,28 @@ async def get_courses_for_skill(
         )
 
 
-async def get_or_create_user_plan(
+async def get_or_create_user_skill_plan(
     session: AsyncSession,
     user_id: int,
-    limit: int = 5,
-) -> list[Course]:
+) -> UserSkillPlanResponse:
     """
-    Возвращает до `limit` курсов из плана пользователя.
+    Возвращает по одному курсу на каждый навык, который выбрал пользователь.
 
-    Если в user_courses уже есть записи, они используются как кэш.
-    Если курсов меньше limit, сервис пытается добрать недостающие
-    рекомендации и сохранить их в user_courses. Повторно алгоритм
-    для уже сохранённых курсов не вызывается.
+    Если для навыка уже есть запись в user_courses, она используется как кэш.
+    Если записи нет, сервис подбирает лучший курс для этого навыка, сохраняет
+    его в user_courses и возвращает вместе с остальными рекомендациями.
     """
+    user_skills_q = (
+        select(UserSkill)
+        .where(UserSkill.user_id == user_id)
+        .options(selectinload(UserSkill.skill))
+        .order_by(UserSkill.skill_id)
+    )
+    user_skills = list((await session.execute(user_skills_q)).scalars().all())
+
+    if not user_skills:
+        return UserSkillPlanResponse(user_id=user_id, recommendations=[])
+
     existing_q = (
         select(UserCourse)
         .where(UserCourse.user_id == user_id)
@@ -401,119 +435,57 @@ async def get_or_create_user_plan(
         .order_by(UserCourse.skill_id)
     )
     existing_items = list((await session.execute(existing_q)).scalars().all())
+    existing_by_skill = {item.skill_id: item for item in existing_items}
 
-    result_courses: list[Course] = []
-    used_course_ids: set[int] = set()
-
-    for item in existing_items:
-        if item.course_id in used_course_ids:
-            continue
-        result_courses.append(item.course)
-        used_course_ids.add(item.course_id)
-        if len(result_courses) >= limit:
-            return result_courses[:limit]
-
-    profession_link = (
-        await session.execute(
-            select(UserProfession)
-            .where(UserProfession.user_id == user_id)
-            .order_by(UserProfession.profession_id)
-        )
-    ).scalars().first()
-
-    if profession_link is None:
-        return result_courses
-
-    profession_id = profession_link.profession_id
-
-    # Сначала берём по одному лучшему курсу на каждый навык профессии.
-    recommendation_response = await get_best_courses_for_user(session, user_id, profession_id)
-    primary_candidates: list[tuple[int, int, float]] = []
-    for recommendation in recommendation_response.recommendations:
-        course = recommendation.recommended_course
-        if course is None or course.id in used_course_ids:
-            continue
-        primary_candidates.append((recommendation.skill_id, course.id, course.score))
-
-    primary_candidates.sort(key=lambda item: item[2], reverse=True)
-
+    recommendations: list[UserSkillPlanItem] = []
     new_links: list[UserCourse] = []
-    for skill_id, course_id, _score in primary_candidates:
-        if course_id in used_course_ids:
-            continue
-        new_links.append(
-            UserCourse(
-                user_id=user_id,
-                skill_id=skill_id,
-                course_id=course_id,
-                is_completed=False,
+
+    for user_skill in user_skills:
+        existing_item = existing_by_skill.get(user_skill.skill_id)
+        if existing_item is not None:
+            recommendations.append(
+                UserSkillPlanItem(
+                    skill_id=user_skill.skill_id,
+                    skill_name=user_skill.skill.name,
+                    user_level=user_skill.level.value,
+                    planned_course=_course_to_read(existing_item.course),
+                )
             )
-        )
-        used_course_ids.add(course_id)
-        if len(result_courses) + len(new_links) >= limit:
-            break
+            continue
 
-    # Если лучших курсов оказалось меньше 5, добираем из остальных кандидатов.
-    if len(result_courses) + len(new_links) < limit:
-        user, prof_skills, user_skill_map, cs_by_skill, _skill_name_map = await _load_profession_context(
-            session,
-            user_id,
-            profession_id,
-        )
+        skill_courses = await get_courses_for_skill(session, user_id, user_skill.skill_id)
 
-        extra_candidates: list[tuple[int, int, float]] = []
-        for ps in prof_skills:
-            user_level = user_skill_map.get(ps.skill_id, SkillLevel.BEGINNER)
-            for cs in cs_by_skill.get(ps.skill_id, []):
-                course = cs.course
-                if course.id in used_course_ids:
-                    continue
+        selected_course: ScoredCourseRead | None = None
+        if skill_courses.urfu_courses:
+            selected_course = skill_courses.urfu_courses[0]
+        elif skill_courses.other_courses:
+            selected_course = skill_courses.other_courses[0]
 
-                if user.is_fiit and course.platform == URFU_PLATFORM:
-                    if not _is_urfu_course_relevant(course, user):
-                        continue
-                    score = _compute_score(course, cs, user_level, user=user, is_urfu_mode=True)
-                else:
-                    score = _compute_score(course, cs, user_level)
-
-                extra_candidates.append((ps.skill_id, course.id, score))
-
-        extra_candidates.sort(key=lambda item: item[2], reverse=True)
-
-        for skill_id, course_id, _score in extra_candidates:
-            if course_id in used_course_ids:
-                continue
+        if selected_course is not None:
             new_links.append(
                 UserCourse(
                     user_id=user_id,
-                    skill_id=skill_id,
-                    course_id=course_id,
+                    skill_id=user_skill.skill_id,
+                    course_id=selected_course.id,
                     is_completed=False,
                 )
             )
-            used_course_ids.add(course_id)
-            if len(result_courses) + len(new_links) >= limit:
-                break
+
+        recommendations.append(
+            UserSkillPlanItem(
+                skill_id=user_skill.skill_id,
+                skill_name=user_skill.skill.name,
+                user_level=user_skill.level.value,
+                planned_course=(
+                    _scored_to_course_read(selected_course)
+                    if selected_course is not None
+                    else None
+                ),
+            )
+        )
 
     if new_links:
         session.add_all(new_links)
         await session.commit()
 
-        created_q = (
-            select(UserCourse)
-            .where(
-                UserCourse.user_id == user_id,
-                UserCourse.course_id.in_([item.course_id for item in new_links]),
-            )
-            .options(selectinload(UserCourse.course))
-            .order_by(UserCourse.skill_id)
-        )
-        created_items = list((await session.execute(created_q)).scalars().all())
-        for item in created_items:
-            if item.course_id in {course.id for course in result_courses}:
-                continue
-            result_courses.append(item.course)
-            if len(result_courses) >= limit:
-                break
-
-    return result_courses[:limit]
+    return UserSkillPlanResponse(user_id=user_id, recommendations=recommendations)
