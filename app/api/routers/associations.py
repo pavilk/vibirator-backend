@@ -56,6 +56,16 @@ async def commit_or_409(session: AsyncSession, detail: str) -> None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail) from None
 
 
+def ensure_self_or_admin(current_user: User, user_id: int, action: str) -> None:
+    if current_user.is_admin or current_user.user_id == user_id:
+        return
+
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail=f"You can only {action} for yourself",
+    )
+
+
 @router.get("/user-professions", response_model=list[UserProfessionRead])
 async def list_user_professions(
     session: AsyncSession = Depends(get_db_session),
@@ -109,8 +119,10 @@ async def delete_user_profession(
     user_id: int,
     profession_id: int,
     session: AsyncSession = Depends(get_db_session),
-    _: User = Depends(require_admin),
+    current_user: User = Depends(get_current_user),
 ) -> None:
+    ensure_self_or_admin(current_user, user_id, "delete a profession link")
+
     item = await session.get(UserProfession, {"user_id": user_id, "profession_id": profession_id})
     if item is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User profession link not found")
@@ -164,8 +176,10 @@ async def update_user_skill(
     skill_id: int,
     payload: UserSkillUpdate,
     session: AsyncSession = Depends(get_db_session),
-    _: User = Depends(require_admin),
+    current_user: User = Depends(get_current_user),
 ) -> UserSkill:
+    ensure_self_or_admin(current_user, user_id, "update a skill link")
+
     item = await session.get(UserSkill, {"user_id": user_id, "skill_id": skill_id})
     if item is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User skill link not found")
@@ -181,8 +195,10 @@ async def delete_user_skill(
     user_id: int,
     skill_id: int,
     session: AsyncSession = Depends(get_db_session),
-    _: User = Depends(require_admin),
+    current_user: User = Depends(get_current_user),
 ) -> None:
+    ensure_self_or_admin(current_user, user_id, "delete a skill link")
+
     item = await session.get(UserSkill, {"user_id": user_id, "skill_id": skill_id})
     if item is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User skill link not found")
@@ -237,8 +253,10 @@ async def update_user_course(
     skill_id: int,
     payload: UserCourseUpdate,
     session: AsyncSession = Depends(get_db_session),
-    _: User = Depends(require_admin),
+    current_user: User = Depends(get_current_user),
 ) -> UserCourse:
+    ensure_self_or_admin(current_user, user_id, "update a course link")
+
     item = await session.get(UserCourse, {"user_id": user_id, "skill_id": skill_id})
     if item is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User course link not found")
@@ -256,8 +274,10 @@ async def delete_user_course(
     user_id: int,
     skill_id: int,
     session: AsyncSession = Depends(get_db_session),
-    _: User = Depends(require_admin),
+    current_user: User = Depends(get_current_user),
 ) -> None:
+    ensure_self_or_admin(current_user, user_id, "delete a course link")
+
     item = await session.get(UserCourse, {"user_id": user_id, "skill_id": skill_id})
     if item is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User course link not found")
