@@ -1,7 +1,7 @@
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import Select, select
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,7 +15,7 @@ from app.models.associations import (
 )
 from app.models.course import Course
 from app.models.profession import Profession
-from app.models.skill import Skill
+from app.models.skill import Skill, SkillLevel
 from app.models.user import User
 from app.schemas.association import (
     CourseSkillCreate,
@@ -35,6 +35,13 @@ from app.schemas.association import (
 )
 
 router = APIRouter()
+
+
+SKILL_LEVEL_ORDER: dict[SkillLevel, int] = {
+    SkillLevel.BEGINNER: 0,
+    SkillLevel.INTERMEDIATE: 1,
+    SkillLevel.ADVANCED: 2,
+}
 
 
 async def ensure_exists(
@@ -64,6 +71,86 @@ def ensure_self_or_admin(current_user: User, user_id: int, action: str) -> None:
         status_code=status.HTTP_403_FORBIDDEN,
         detail=f"You can only {action} for yourself",
     )
+
+
+async def get_user_course_by_skill_or_course(
+    session: AsyncSession,
+    user_id: int,
+    skill_or_course_id: int,
+) -> UserCourse | None:
+    item = await session.get(UserCourse, {"user_id": user_id, "skill_id": skill_or_course_id})
+    if item is not None:
+        return item
+
+    result = await session.execute(
+        select(UserCourse)
+        .where(
+            UserCourse.user_id == user_id,
+            UserCourse.course_id == skill_or_course_id,
+        )
+        .order_by(UserCourse.skill_id)
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+def parse_skill_level(value: str) -> SkillLevel:
+    try:
+        return SkillLevel(value.lower())
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Course skill target level is invalid",
+        ) from None
+
+
+async def update_user_skill_after_completed_course(
+    session: AsyncSession,
+    item: UserCourse,
+) -> None:
+    course_skill = await session.get(
+        CourseSkill,
+        {"course_id": item.course_id, "skill_id": item.skill_id},
+    )
+    if course_skill is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Course skill target level is not configured",
+        )
+
+    target_level = parse_skill_level(course_skill.to_level)
+    user_skill = await session.get(
+        UserSkill,
+        {"user_id": item.user_id, "skill_id": item.skill_id},
+    )
+    if user_skill is None:
+        session.add(
+            UserSkill(
+                user_id=item.user_id,
+                skill_id=item.skill_id,
+                level=target_level,
+            )
+        )
+        return
+
+    if SKILL_LEVEL_ORDER[target_level] > SKILL_LEVEL_ORDER[user_skill.level]:
+        user_skill.level = target_level
+
+
+async def ensure_course_matches_skill(
+    session: AsyncSession,
+    course_id: int,
+    skill_id: int,
+) -> None:
+    course_skill = await session.get(
+        CourseSkill,
+        {"course_id": course_id, "skill_id": skill_id},
+    )
+    if course_skill is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Course is not linked to this skill",
+        )
 
 
 @router.get("/user-professions", response_model=list[UserProfessionRead])
@@ -257,12 +344,21 @@ async def update_user_course(
 ) -> UserCourse:
     ensure_self_or_admin(current_user, user_id, "update a course link")
 
-    item = await session.get(UserCourse, {"user_id": user_id, "skill_id": skill_id})
+    item = await get_user_course_by_skill_or_course(session, user_id, skill_id)
     if item is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User course link not found")
 
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    update_data = payload.model_dump(exclude_unset=True)
+    if "course_id" in update_data:
+        await ensure_course_matches_skill(session, update_data["course_id"], item.skill_id)
+        if update_data["course_id"] != item.course_id and "is_completed" not in update_data:
+            item.is_completed = False
+
+    for field, value in update_data.items():
         setattr(item, field, value)
+
+    if payload.is_completed is True:
+        await update_user_skill_after_completed_course(session, item)
 
     await commit_or_409(session, "This user course link already exists")
     await session.refresh(item)
@@ -278,7 +374,7 @@ async def delete_user_course(
 ) -> None:
     ensure_self_or_admin(current_user, user_id, "delete a course link")
 
-    item = await session.get(UserCourse, {"user_id": user_id, "skill_id": skill_id})
+    item = await get_user_course_by_skill_or_course(session, user_id, skill_id)
     if item is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User course link not found")
 
