@@ -384,12 +384,19 @@ async def delete_user_course(
 
 @router.get("/profession-skills", response_model=list[ProfessionSkillRead])
 async def list_profession_skills(
+    profession_id: int | None = None,
     session: AsyncSession = Depends(get_db_session),
     _: User = Depends(get_current_user),
 ) -> list[ProfessionSkill]:
-    result = await session.execute(
-        select(ProfessionSkill).order_by(ProfessionSkill.profession_id, ProfessionSkill.skill_id)
+    query = select(ProfessionSkill).where(ProfessionSkill.show == True)
+    if profession_id is not None:
+        query = query.where(ProfessionSkill.profession_id == profession_id)
+    query = query.order_by(
+        ProfessionSkill.extra.asc(),
+        ProfessionSkill.display_order.asc(),
+        ProfessionSkill.weight.desc(),
     )
+    result = await session.execute(query)
     return list(result.scalars().all())
 
 
