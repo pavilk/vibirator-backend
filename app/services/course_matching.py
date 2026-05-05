@@ -140,8 +140,18 @@ def _is_urfu_course_relevant(course: Course, user: User) -> bool:
     return True
 
 
-def _course_to_scored(course: Course, skill_id: int, score: float) -> ScoredCourseRead:
+async def _course_to_scored(
+    course: Course,
+    skill_id: int,
+    score: float,
+    session: AsyncSession,
+) -> ScoredCourseRead:
     """Конвертация ORM-модели Course в Pydantic-схему ScoredCourseRead."""
+    # Загружаем навыки курса
+    course_skills_q = select(CourseSkill).where(CourseSkill.course_id == course.id).options(selectinload(CourseSkill.skill))
+    course_skills = list((await session.execute(course_skills_q)).scalars().all())
+    skill_names = [cs.skill.name for cs in course_skills if cs.skill]
+
     return ScoredCourseRead(
         id=course.id,
         title=course.title,
@@ -158,6 +168,7 @@ def _course_to_scored(course: Course, skill_id: int, score: float) -> ScoredCour
         semesters=course.semesters,
         skill_id=skill_id,
         score=score,
+        skills=skill_names,
     )
 
 
@@ -293,7 +304,7 @@ async def get_best_courses_for_user(
                 sc = _compute_score(course, cs, user_level, user=user, is_urfu_mode=True)
                 if sc > urfu_best_score:
                     urfu_best_score = sc
-                    urfu_best = _course_to_scored(course, sid, sc)
+                    urfu_best = await _course_to_scored(course, sid, sc, session)
 
             if urfu_best is not None:
                 best_course = urfu_best
@@ -304,7 +315,7 @@ async def get_best_courses_for_user(
                     sc = _compute_score(course, cs, user_level)
                     if sc > other_best_score:
                         other_best_score = sc
-                        best_course = _course_to_scored(course, sid, sc)
+                        best_course = await _course_to_scored(course, sid, sc, session)
         else:
             best_score = -1.0
             for cs in candidates:
@@ -312,7 +323,7 @@ async def get_best_courses_for_user(
                 sc = _compute_score(course, cs, user_level)
                 if sc > best_score:
                     best_score = sc
-                    best_course = _course_to_scored(course, sid, sc)
+                    best_course = await _course_to_scored(course, sid, sc, session)
 
         recommendations.append(
             SkillRecommendation(
@@ -373,10 +384,10 @@ async def get_courses_for_skill(
                 if not _is_urfu_course_relevant(course, user):
                     continue
                 sc = _compute_score(course, cs, user_level, user=user, is_urfu_mode=True)
-                urfu_scored.append(_course_to_scored(course, skill_id, sc))
+                urfu_scored.append(await _course_to_scored(course, skill_id, sc, session))
             else:
                 sc = _compute_score(course, cs, user_level)
-                other_scored.append(_course_to_scored(course, skill_id, sc))
+                other_scored.append(await _course_to_scored(course, skill_id, sc, session))
 
         urfu_scored.sort(key=lambda c: c.score, reverse=True)
         other_scored.sort(key=lambda c: c.score, reverse=True)
@@ -390,10 +401,11 @@ async def get_courses_for_skill(
         )
     else:
         all_scored: list[ScoredCourseRead] = []
+
         for cs in course_skills:
             course = cs.course
             sc = _compute_score(course, cs, user_level)
-            all_scored.append(_course_to_scored(course, skill_id, sc))
+            all_scored.append(await _course_to_scored(course, skill_id, sc, session))
 
         all_scored.sort(key=lambda c: c.score, reverse=True)
 

@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routers import associations, auth, courses, professions, skills, users
+from app.api.routers import associations, auth, courses, matching, professions, skills, users
 
 app = FastAPI(title="Vibirator Backend")
 
@@ -22,6 +22,7 @@ app.include_router(skills.router, prefix="/skills", tags=["skills"])
 app.include_router(courses.router, prefix="/courses", tags=["courses"])
 app.include_router(professions.router, prefix="/professions", tags=["professions"])
 app.include_router(associations.router, prefix="/relations", tags=["relations"])
+app.include_router(matching.router, prefix="/matching", tags=["matching"])
 
 
 @app.get("/health", tags=["health"])

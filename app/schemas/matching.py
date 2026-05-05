@@ -21,6 +21,7 @@ class ScoredCourseRead(BaseModel):
     semesters: list[int] | None = None
     skill_id: int
     score: float
+    skills: list[str] = []
 
 
 class SkillRecommendation(BaseModel):
