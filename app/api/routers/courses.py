@@ -24,10 +24,11 @@ async def list_courses(
 
 @router.get("/plan", response_model=UserSkillPlanResponse)
 async def get_user_plan(
+    profession_id: int | None = None,
     session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(get_current_user),
 ) -> UserSkillPlanResponse:
-    return await get_or_create_user_skill_plan(session, current_user.user_id)
+    return await get_or_create_user_skill_plan(session, current_user.user_id, profession_id)
 
 
 @router.get("/{course_id}", response_model=CourseRead)

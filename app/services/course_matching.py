@@ -31,8 +31,48 @@ LEVEL_ORDER: dict[SkillLevel, int] = {
     SkillLevel.INTERMEDIATE: 1,
     SkillLevel.ADVANCED: 2,
 }
+ORDER_LEVEL: dict[int, SkillLevel] = {value: key for key, value in LEVEL_ORDER.items()}
+DEFAULT_PROFESSION_TARGET_LEVEL = SkillLevel.ADVANCED
 
 URFU_PLATFORM = "UrFU"
+
+
+def _level_order(level: SkillLevel | str | None, default: int = 0) -> int:
+    if isinstance(level, SkillLevel):
+        return LEVEL_ORDER[level]
+
+    if isinstance(level, str):
+        try:
+            return LEVEL_ORDER[SkillLevel(level.lower())]
+        except ValueError:
+            return default
+
+    return default
+
+
+def _next_level_to_learn(
+    current_level: SkillLevel | None,
+    target_level: SkillLevel = DEFAULT_PROFESSION_TARGET_LEVEL,
+) -> SkillLevel | None:
+    if current_level is None:
+        return SkillLevel.BEGINNER
+
+    current_order = _level_order(current_level)
+    target_order = _level_order(target_level)
+    if current_order >= target_order:
+        return None
+
+    return ORDER_LEVEL[min(current_order + 1, target_order)]
+
+
+def _course_reaches_desired_level(
+    cs: CourseSkill,
+    current_level: SkillLevel | None,
+    desired_level: SkillLevel,
+) -> bool:
+    current_order = -1 if current_level is None else _level_order(current_level)
+    to_order = _level_order(cs.to_level, default=2)
+    return to_order >= _level_order(desired_level) and to_order > current_order
 
 
 def _compute_score(
@@ -83,9 +123,9 @@ def _compute_score(
     """
     score = 0.0
 
-    user_lvl = LEVEL_ORDER[user_level]
-    from_lvl = LEVEL_ORDER.get(cs.from_level, 0)
-    to_lvl = LEVEL_ORDER.get(cs.to_level, 2)
+    user_lvl = _level_order(user_level)
+    from_lvl = _level_order(cs.from_level)
+    to_lvl = _level_order(cs.to_level, default=2)
 
     if from_lvl == user_lvl:
         score += 50.0
@@ -95,6 +135,73 @@ def _compute_score(
         score += max(0.0, 15.0 - (user_lvl - to_lvl) * 10.0)
     else:
         score += max(0.0, 20.0 - (from_lvl - user_lvl) * 15.0)
+
+    if cs.relevance_score is not None:
+        score += min(cs.relevance_score, 100)
+
+    if course.rating is not None:
+        score += float(course.rating) * 5.0
+
+    if not is_urfu_mode and course.is_paid is not None and not course.is_paid:
+        score += 20.0
+
+    if is_urfu_mode and user is not None:
+        if user.course_year and course.target_years:
+            if user.course_year in course.target_years:
+                score += 15.0
+            else:
+                min_diff = min(abs(user.course_year - y) for y in course.target_years)
+                if min_diff == 1:
+                    score += 5.0
+
+        if user.semester and course.semesters:
+            if user.semester in course.semesters:
+                score += 10.0
+
+    return round(score, 2)
+
+
+def _compute_development_score(
+    course: Course,
+    cs: CourseSkill,
+    current_level: SkillLevel | None,
+    desired_level: SkillLevel,
+    user: User | None = None,
+    is_urfu_mode: bool = False,
+) -> float:
+    """Score a course as the next growth step for a profession skill."""
+    score = 0.0
+
+    current_order = -1 if current_level is None else _level_order(current_level)
+    desired_order = _level_order(desired_level)
+    from_order = _level_order(cs.from_level)
+    to_order = _level_order(cs.to_level, default=2)
+
+    if to_order == desired_order:
+        score += 80.0
+    elif to_order > desired_order:
+        score += max(20.0, 55.0 - (to_order - desired_order) * 15.0)
+    else:
+        score -= 40.0 * (desired_order - to_order)
+
+    if current_level is None:
+        if from_order == desired_order:
+            score += 35.0
+        elif from_order < desired_order:
+            score += 20.0
+        else:
+            score -= 20.0 * (from_order - desired_order)
+    elif from_order == current_order:
+        score += 40.0
+    elif from_order == desired_order:
+        score += 15.0
+    elif from_order < current_order:
+        score += max(0.0, 15.0 - (current_order - from_order) * 7.5)
+    else:
+        score -= 15.0 * (from_order - current_order)
+
+    if to_order <= current_order:
+        score -= 80.0
 
     if cs.relevance_score is not None:
         score += min(cs.relevance_score, 100)
@@ -252,6 +359,65 @@ async def _load_profession_context(
     return user, prof_skills, user_skill_map, cs_by_skill, skill_name_map
 
 
+async def _select_best_development_course(
+    session: AsyncSession,
+    user: User,
+    skill_id: int,
+    candidates: list[CourseSkill],
+    current_level: SkillLevel | None,
+    desired_level: SkillLevel,
+) -> ScoredCourseRead | None:
+    best_course: ScoredCourseRead | None = None
+
+    if user.is_fiit:
+        urfu_best: ScoredCourseRead | None = None
+        urfu_best_score = -1.0
+
+        for cs in candidates:
+            course = cs.course
+            if course.platform != URFU_PLATFORM:
+                continue
+            if not _is_urfu_course_relevant(course, user):
+                continue
+            if not _course_reaches_desired_level(cs, current_level, desired_level):
+                continue
+
+            sc = _compute_development_score(
+                course,
+                cs,
+                current_level,
+                desired_level,
+                user=user,
+                is_urfu_mode=True,
+            )
+            if sc > urfu_best_score:
+                urfu_best_score = sc
+                urfu_best = await _course_to_scored(course, skill_id, sc, session)
+
+        if urfu_best is not None:
+            return urfu_best
+
+    best_score = -1.0
+    for cs in candidates:
+        course = cs.course
+        if user.is_fiit and course.platform == URFU_PLATFORM:
+            continue
+        if not _course_reaches_desired_level(cs, current_level, desired_level):
+            continue
+
+        sc = _compute_development_score(
+            course,
+            cs,
+            current_level,
+            desired_level,
+        )
+        if sc > best_score:
+            best_score = sc
+            best_course = await _course_to_scored(course, skill_id, sc, session)
+
+    return best_course
+
+
 async def get_best_courses_for_user(
     session: AsyncSession,
     user_id: int,
@@ -285,51 +451,29 @@ async def get_best_courses_for_user(
 
     for ps in prof_skills:
         sid = ps.skill_id
-        user_level = user_skill_map.get(sid, SkillLevel.BEGINNER)
+        user_level = user_skill_map.get(sid)
+        desired_level = _next_level_to_learn(user_level)
         skill_name = skill_name_map.get(sid, "")
         candidates = cs_by_skill.get(sid, [])
 
-        best_course: ScoredCourseRead | None = None
-
-        if user.is_fiit:
-            urfu_best: ScoredCourseRead | None = None
-            urfu_best_score = -1.0
-
-            for cs in candidates:
-                course = cs.course
-                if course.platform != URFU_PLATFORM:
-                    continue
-                if not _is_urfu_course_relevant(course, user):
-                    continue
-                sc = _compute_score(course, cs, user_level, user=user, is_urfu_mode=True)
-                if sc > urfu_best_score:
-                    urfu_best_score = sc
-                    urfu_best = await _course_to_scored(course, sid, sc, session)
-
-            if urfu_best is not None:
-                best_course = urfu_best
-            else:
-                other_best_score = -1.0
-                for cs in candidates:
-                    course = cs.course
-                    sc = _compute_score(course, cs, user_level)
-                    if sc > other_best_score:
-                        other_best_score = sc
-                        best_course = await _course_to_scored(course, sid, sc, session)
-        else:
-            best_score = -1.0
-            for cs in candidates:
-                course = cs.course
-                sc = _compute_score(course, cs, user_level)
-                if sc > best_score:
-                    best_score = sc
-                    best_course = await _course_to_scored(course, sid, sc, session)
+        best_course = (
+            await _select_best_development_course(
+                session,
+                user,
+                sid,
+                candidates,
+                user_level,
+                desired_level,
+            )
+            if desired_level is not None
+            else None
+        )
 
         recommendations.append(
             SkillRecommendation(
                 skill_id=sid,
                 skill_name=skill_name,
-                user_level=user_level.value,
+                user_level=user_level.value if user_level is not None else "none",
                 recommended_course=best_course,
             )
         )
@@ -362,7 +506,8 @@ async def get_courses_for_skill(
         raise ValueError(f"Пользователь {user_id} не найден")
 
     user_skill = await session.get(UserSkill, {"user_id": user_id, "skill_id": skill_id})
-    user_level = user_skill.level if user_skill else SkillLevel.BEGINNER
+    user_level = user_skill.level if user_skill else None
+    desired_level = _next_level_to_learn(user_level)
 
     skill = await session.get(Skill, skill_id)
     skill_name = skill.name if skill else ""
@@ -374,6 +519,15 @@ async def get_courses_for_skill(
     )
     course_skills = list((await session.execute(cs_q)).scalars().all())
 
+    if desired_level is None:
+        return SkillCoursesResponse(
+            skill_id=skill_id,
+            skill_name=skill_name,
+            user_level=user_level.value if user_level is not None else "none",
+            urfu_courses=[] if user.is_fiit else None,
+            other_courses=[],
+        )
+
     if user.is_fiit:
         urfu_scored: list[ScoredCourseRead] = []
         other_scored: list[ScoredCourseRead] = []
@@ -383,10 +537,21 @@ async def get_courses_for_skill(
             if course.platform == URFU_PLATFORM:
                 if not _is_urfu_course_relevant(course, user):
                     continue
-                sc = _compute_score(course, cs, user_level, user=user, is_urfu_mode=True)
+                if not _course_reaches_desired_level(cs, user_level, desired_level):
+                    continue
+                sc = _compute_development_score(
+                    course,
+                    cs,
+                    user_level,
+                    desired_level,
+                    user=user,
+                    is_urfu_mode=True,
+                )
                 urfu_scored.append(await _course_to_scored(course, skill_id, sc, session))
             else:
-                sc = _compute_score(course, cs, user_level)
+                if not _course_reaches_desired_level(cs, user_level, desired_level):
+                    continue
+                sc = _compute_development_score(course, cs, user_level, desired_level)
                 other_scored.append(await _course_to_scored(course, skill_id, sc, session))
 
         urfu_scored.sort(key=lambda c: c.score, reverse=True)
@@ -395,7 +560,7 @@ async def get_courses_for_skill(
         return SkillCoursesResponse(
             skill_id=skill_id,
             skill_name=skill_name,
-            user_level=user_level.value,
+            user_level=user_level.value if user_level is not None else "none",
             urfu_courses=urfu_scored,
             other_courses=other_scored,
         )
@@ -404,7 +569,9 @@ async def get_courses_for_skill(
 
         for cs in course_skills:
             course = cs.course
-            sc = _compute_score(course, cs, user_level)
+            if not _course_reaches_desired_level(cs, user_level, desired_level):
+                continue
+            sc = _compute_development_score(course, cs, user_level, desired_level)
             all_scored.append(await _course_to_scored(course, skill_id, sc, session))
 
         all_scored.sort(key=lambda c: c.score, reverse=True)
@@ -412,7 +579,7 @@ async def get_courses_for_skill(
         return SkillCoursesResponse(
             skill_id=skill_id,
             skill_name=skill_name,
-            user_level=user_level.value,
+            user_level=user_level.value if user_level is not None else "none",
             urfu_courses=None,
             other_courses=all_scored,
         )
@@ -421,6 +588,7 @@ async def get_courses_for_skill(
 async def get_or_create_user_skill_plan(
     session: AsyncSession,
     user_id: int,
+    profession_id: int | None = None,
 ) -> UserSkillPlanResponse:
     """
     Возвращает по одному курсу на каждый навык, который выбрал пользователь.
@@ -429,15 +597,23 @@ async def get_or_create_user_skill_plan(
     Если записи нет, сервис подбирает лучший курс для этого навыка, сохраняет
     его в user_courses и возвращает вместе с остальными рекомендациями.
     """
-    user_skills_q = (
-        select(UserSkill)
-        .where(UserSkill.user_id == user_id)
-        .options(selectinload(UserSkill.skill))
-        .order_by(UserSkill.skill_id)
-    )
-    user_skills = list((await session.execute(user_skills_q)).scalars().all())
+    if profession_id is None:
+        user_profession_q = (
+            select(UserProfession)
+            .where(UserProfession.user_id == user_id)
+            .order_by(UserProfession.profession_id)
+            .limit(1)
+        )
+        user_profession = (await session.execute(user_profession_q)).scalar_one_or_none()
+        if user_profession is None:
+            return UserSkillPlanResponse(user_id=user_id, recommendations=[])
+        profession_id = user_profession.profession_id
 
-    if not user_skills:
+    user, prof_skills, user_skill_map, cs_by_skill, skill_name_map = (
+        await _load_profession_context(session, user_id, profession_id)
+    )
+
+    if not prof_skills:
         return UserSkillPlanResponse(user_id=user_id, recommendations=[])
 
     existing_q = (
@@ -452,52 +628,76 @@ async def get_or_create_user_skill_plan(
     recommendations: list[UserSkillPlanItem] = []
     new_links: list[UserCourse] = []
 
-    for user_skill in user_skills:
-        existing_item = existing_by_skill.get(user_skill.skill_id)
-        if existing_item is not None:
-            recommendations.append(
-                UserSkillPlanItem(
-                    skill_id=user_skill.skill_id,
-                    skill_name=user_skill.skill.name,
-                    user_level=user_skill.level.value,
-                    planned_course=_course_to_read(existing_item.course),
-                )
-            )
-            continue
-
-        skill_courses = await get_courses_for_skill(session, user_id, user_skill.skill_id)
-
+    for prof_skill in prof_skills:
+        skill_id = prof_skill.skill_id
+        user_level = user_skill_map.get(skill_id)
+        desired_level = _next_level_to_learn(user_level)
+        skill_name = skill_name_map.get(skill_id, "")
         selected_course: ScoredCourseRead | None = None
-        if skill_courses.urfu_courses:
-            selected_course = skill_courses.urfu_courses[0]
-        elif skill_courses.other_courses:
-            selected_course = skill_courses.other_courses[0]
 
-        if selected_course is not None:
+        if desired_level is not None:
+            selected_course = await _select_best_development_course(
+                session,
+                user,
+                skill_id,
+                cs_by_skill.get(skill_id, []),
+                user_level,
+                desired_level,
+            )
+
+        existing_item = existing_by_skill.get(skill_id)
+        planned_course: CourseRead | None = None
+
+        if existing_item is not None and desired_level is not None:
+            existing_course_skill = await session.get(
+                CourseSkill,
+                {"course_id": existing_item.course_id, "skill_id": skill_id},
+            )
+            existing_target_order = (
+                _level_order(existing_course_skill.to_level, default=-1)
+                if existing_course_skill is not None
+                else -1
+            )
+
+            if existing_item.is_completed or existing_target_order == _level_order(desired_level):
+                planned_course = _course_to_read(existing_item.course)
+            elif selected_course is not None:
+                existing_item.course_id = selected_course.id
+                existing_item.is_completed = False
+                planned_course = _scored_to_course_read(selected_course)
+        elif existing_item is not None and desired_level is None:
+            planned_course = None
+
+        if existing_item is None and selected_course is not None:
             new_links.append(
                 UserCourse(
                     user_id=user_id,
-                    skill_id=user_skill.skill_id,
+                    skill_id=skill_id,
                     course_id=selected_course.id,
                     is_completed=False,
                 )
             )
+            planned_course = _scored_to_course_read(selected_course)
+
+        if existing_item is None and selected_course is None:
+            planned_course = None
+
+        if planned_course is None and selected_course is not None and existing_item is not None:
+            planned_course = _scored_to_course_read(selected_course)
 
         recommendations.append(
             UserSkillPlanItem(
-                skill_id=user_skill.skill_id,
-                skill_name=user_skill.skill.name,
-                user_level=user_skill.level.value,
-                planned_course=(
-                    _scored_to_course_read(selected_course)
-                    if selected_course is not None
-                    else None
-                ),
+                skill_id=skill_id,
+                skill_name=skill_name,
+                user_level=user_level.value if user_level is not None else "none",
+                planned_course=planned_course,
             )
         )
 
     if new_links:
         session.add_all(new_links)
+
+    if new_links or session.dirty:
         await session.commit()
 
     return UserSkillPlanResponse(user_id=user_id, recommendations=recommendations)
